@@ -94,7 +94,6 @@ namespace GameServerHelper
                 if (proc.Start())
                 {
                     serverProcess = proc;
-                    MessageBox.Show("Server started successfully.");
                 }
                 else
                 {
