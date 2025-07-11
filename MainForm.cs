@@ -2,7 +2,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -25,6 +24,7 @@ namespace GameServerHelper
         delegate bool ConsoleCtrlDelegate(uint ctrlType);
 
         const uint CTRL_C_EVENT = 0;
+
         private Process serverProcess;
         private System.Windows.Forms.Timer dailyTimer;
         private AppSettings settings;
@@ -37,60 +37,25 @@ namespace GameServerHelper
             SetupTimer();
         }
 
-        private void LoadSettings()
-        {
-            if (File.Exists(SettingsFile))
-            {
-                var json = File.ReadAllText(SettingsFile);
-                settings = JsonSerializer.Deserialize<AppSettings>(json);
-            }
-            else
-            {
-                settings = new AppSettings();
-            }
-
-            txtExePath.Text = settings.ExePath;
-            txtArguments.Text = settings.Arguments;
-            txtUpdateScript.Text = settings.UpdateScriptPath;
-        }
-
-        private void SaveSettings()
-        {
-            settings.ExePath = txtExePath.Text;
-            settings.Arguments = txtArguments.Text;
-            settings.UpdateScriptPath = txtUpdateScript.Text;
-
-            var json = JsonSerializer.Serialize(settings);
-            File.WriteAllText(SettingsFile, json);
-        }
-
-        private void SetupTimer()
-        {
-            dailyTimer = new System.Windows.Forms.Timer { Interval = 60 * 1000 };
-            dailyTimer.Tick += (s, e) =>
-            {
-                var now = DateTime.Now;
-                if (now.Hour == 3 && now.Minute == 0)
-                {
-                    RestartAndUpdate();
-                }
-            };
-            dailyTimer.Start();
-        }
-
         private void btnStart_Click(object sender, EventArgs e)
         {
+            if (settings.UpdateBeforeStart)
+                RunUpdateScript();
             StartServer();
         }
 
         private void btnStop_Click(object sender, EventArgs e)
         {
             StopServer();
+            if (settings.UpdateOnStop)
+                RunUpdateScript();
         }
 
         private void btnRestartUpdate_Click(object sender, EventArgs e)
         {
-            RestartAndUpdate();
+            StopServer();
+            RunUpdateScript();
+            StartServer();
         }
 
         private void btnSaveSettings_Click(object sender, EventArgs e)
@@ -129,6 +94,7 @@ namespace GameServerHelper
                 if (proc.Start())
                 {
                     serverProcess = proc;
+                    MessageBox.Show("Server started successfully.");
                 }
                 else
                 {
@@ -141,7 +107,6 @@ namespace GameServerHelper
             }
         }
 
-
         private void StopServer()
         {
             if (serverProcess == null || serverProcess.HasExited)
@@ -150,46 +115,62 @@ namespace GameServerHelper
                 return;
             }
 
-            SetConsoleCtrlHandler(null, true);
-            AttachConsole((uint)serverProcess.Id);
-            GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
-            Thread.Sleep(1000);
-            FreeConsole();
-            SetConsoleCtrlHandler(null, false);
-
-            serverProcess.WaitForExit(10000);
-            if (!serverProcess.HasExited)
+            try
             {
-                serverProcess.Kill();
+                SetConsoleCtrlHandler(null, true);
+                AttachConsole((uint)serverProcess.Id);
+                GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+                Thread.Sleep(1000);
+                FreeConsole();
+                SetConsoleCtrlHandler(null, false);
+
+                serverProcess.WaitForExit(10000);
+                if (!serverProcess.HasExited)
+                {
+                    serverProcess.Kill();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error stopping server:\n{ex.Message}");
             }
         }
+
+        private void RunUpdateScript()
+        {
+            if (!string.IsNullOrWhiteSpace(settings.UpdateScriptPath) && File.Exists(settings.UpdateScriptPath))
+            {
+                try
+                {
+                    var update = new Process
+                    {
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = "cmd.exe",
+                            Arguments = $"/C \"{settings.UpdateScriptPath}\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = false,
+                            RedirectStandardOutput = false,
+                            RedirectStandardError = false
+                        }
+                    };
+
+                    update.Start();
+                    update.WaitForExit();
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error running update script:\n{ex.Message}");
+                }
+            }
+        }
+
 
         private void RestartAndUpdate()
         {
             StopServer();
-
-            if (File.Exists(settings.UpdateScriptPath))
-            {
-                var update = new Process
-                {
-                    StartInfo = new ProcessStartInfo
-                    {
-                        FileName = settings.UpdateScriptPath,
-                        UseShellExecute = true
-                    }
-                };
-                update.Start();
-                update.WaitForExit();
-            }
-
+            RunUpdateScript();
             StartServer();
         }
-    }
-
-    public class AppSettings
-    {
-        public string ExePath { get; set; }
-        public string Arguments { get; set; }
-        public string UpdateScriptPath { get; set; }
     }
 }
